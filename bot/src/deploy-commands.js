@@ -3,7 +3,7 @@ import { REST, Routes } from 'discord.js';
 import { loadConfig } from './config.js';
 import { data } from './commands/dailydev.js';
 
-const config = loadConfig();
+const config = loadConfig({ requireRuntime: false });
 const rest = new REST().setToken(config.discordToken);
 const body = [data.toJSON()];
 

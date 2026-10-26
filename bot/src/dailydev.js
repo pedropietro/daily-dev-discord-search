@@ -1,4 +1,4 @@
-// Minimal daily.dev public API client.
+// Minimal daily.dev public API client. One instance per request, bound to ONE user's OAuth access token.
 // The token is only ever sent to this fixed host — never build the base URL from user input.
 const BASE_URL = 'https://api.daily.dev/public/v1';
 const TIMEOUT_MS = 8000;
@@ -35,10 +35,10 @@ export class DailyDevClient {
       return this.#get(path, params, { retryOn429: false });
     }
     if (res.status === 401) {
-      throw new DailyDevError('daily.dev token is invalid or expired (regenerate it at daily.dev/settings/api).', 401);
+      throw new DailyDevError('daily.dev access token is invalid or expired.', 401);
     }
     if (res.status === 429) {
-      throw new DailyDevError('daily.dev rate limit reached. Try again in a moment.', 429);
+      throw new DailyDevError('daily.dev rate limit or monthly quota reached.', 429);
     }
     if (!res.ok) {
       throw new DailyDevError(`daily.dev API error (HTTP ${res.status}).`, res.status);

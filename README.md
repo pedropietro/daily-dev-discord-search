@@ -1,63 +1,63 @@
 # daily.dev Discord Search Suggestions
 
-Bot do Discord com o comando `/dailydev busca`, que responde no canal com os posts mais bem avaliados do daily.dev sobre um tema. Pronto para ser submetido ao [daily.dev Marketplace](https://daily.dev/marketplace) como plugin (SKILL.md + link do repositório).
+Discord bot where **each member links their own daily.dev account** (OAuth, read-only) and searches daily.dev from Discord. Results are private to whoever searched; a **Share in channel** button posts the titles and links on their behalf.
 
 ```
-/dailydev busca tema:kafka periodo:último mês quantidade:5
+/dailydev connect                     → link your daily.dev account (once)
+/dailydev search query:kafka period:last month count:5
+/dailydev status | /dailydev disconnect
 ```
 
-| Opção | Descrição |
+pt-BR clients see `/dailydev conectar`, `/dailydev buscar tema:…`, `/dailydev desconectar` and Portuguese replies.
+
+| Option | Description |
 |---|---|
-| `tema` (obrigatório) | Tema ou pergunta. Autocomplete sugere tags do daily.dev enquanto você digita |
-| `periodo` | últimas 24h, semana, mês (padrão), ano ou todo o período |
-| `quantidade` | 1 a 10 posts (padrão 5) |
-| `modo` | Palavra-chave (padrão, com paginação) ou Semântica (perguntas em linguagem natural) |
-| `privado` | Mostra o resultado só para quem pediu |
+| `query` / `tema` (required) | Topic or question. Optional tag autocomplete (off by default) |
+| `period` / `periodo` | last 24h, week, month (default), year, all time |
+| `count` / `quantidade` | 1–10 posts (default 5) |
+| `mode` / `modo` | Keyword (default, paged) or Semantic (natural-language questions) |
 
-A resposta é um embed numerado (título com link, fonte, ▲ upvotes, 💬 comentários, tempo de leitura, tags e link da discussão) com o botão **Mais resultados**.
+## Why OAuth per user
 
-## Estrutura
+The daily.dev Public API serves data to the token holder. So the bot never uses a shared token: every request runs with the Discord user's own access token, obtained through a daily.dev OAuth app (authorization code + PKCE, `read` scope only). Each user spends their own allowance (free tier: **60 requests/min, 200/month**).
+
+## Structure
 
 ```
-daily-dev-discord-search/
-├── SKILL.md                    # instruções para o agente (campo SKILL.md do marketplace)
-├── marketplace-submission.md   # textos prontos: Name, Short description, About, Link
-└── bot/
-    ├── src/
-    │   ├── index.js            # cliente Discord e roteamento das interações
-    │   ├── deploy-commands.js  # registra o slash command
-    │   ├── commands/dailydev.js# definição, execução, botão "Mais resultados", autocomplete
-    │   ├── dailydev.js         # cliente da API pública (token só vai para api.daily.dev)
-    │   ├── format.js           # monta o embed (funções puras, testadas)
-    │   └── config.js           # leitura e validação do .env
-    ├── test/                   # node:test — unidade + 1 smoke test real (se houver token)
-    ├── .env.example
-    ├── Dockerfile
-    └── package.json
+bot/src/
+├── index.js            Discord client + starts the OAuth callback server
+├── server.js           GET /oauth/callback, GET /healthz
+├── oauth.js            authorize URL (PKCE S256, state), code exchange, refresh rotation, revoke
+├── tokenStore.js       per-user tokens, AES-256-GCM encrypted, atomic writes (data/tokens.json)
+├── tokenManager.js     valid token per user, single-flight refresh, retry on 401, disconnect
+├── commands/dailydev.js  search / connect / disconnect / status, buttons, autocomplete
+├── dailydev.js         Public API client (token only ever sent to api.daily.dev)
+├── format.js, i18n.js  embeds and EN / pt-BR strings
+└── config.js, deploy-commands.js
 ```
 
-## Rodando
+## Running
 
-1. Node.js 18.17+. Em `bot/`: `npm install`
-2. `cp .env.example .env` e preencha:
-   - `DISCORD_TOKEN` e `DISCORD_CLIENT_ID` — [Discord Developer Portal](https://discord.com/developers/applications) → sua aplicação → Bot / General Information
-   - `DISCORD_GUILD_ID` — ID do servidor de teste (opcional; registra o comando na hora)
-   - `DAILY_DEV_TOKEN` — https://daily.dev/settings/api
-3. Convide o bot: OAuth2 → URL Generator → escopos `bot` + `applications.commands`, permissões `Send Messages` + `Embed Links`
-4. `npm run deploy-commands`
-5. `npm start` (ou `docker build -t dd-discord . && docker run --env-file .env dd-discord`)
+1. Node.js 18.17+. In `bot/`: `npm install && npm test`
+2. **daily.dev OAuth app**: daily.dev → Settings → API → OAuth apps → Create app. Redirect URI: `https://<your-host>/oauth/callback`.
+3. `cp .env.example .env` and fill in:
+   - `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` (and optionally `DISCORD_GUILD_ID` for instant registration)
+   - `DAILY_DEV_CLIENT_ID`, `DAILY_DEV_CLIENT_SECRET`
+   - `PUBLIC_BASE_URL` (HTTPS, reaches `PORT`), `TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`)
+4. Invite the bot: OAuth2 → URL Generator → scopes `bot` + `applications.commands`, permissions `Send Messages` + `Embed Links`.
+5. `npm run deploy-commands`
+6. `npm start`, or with Docker:
+   ```bash
+   docker build -t dd-discord bot/
+   docker run --env-file bot/.env -p 3000:3000 -v dd-data:/app/data dd-discord
+   ```
 
-Testes: `npm test` (com `DAILY_DEV_TOKEN` no ambiente, roda também um teste contra a API real).
+For local testing, a tunnel (e.g. `cloudflared tunnel --url http://localhost:3000`) gives you an HTTPS `PUBLIC_BASE_URL`; register that callback on the OAuth app.
 
-## Publicando no marketplace
+## Design notes
 
-1. Suba a pasta para um repositório público no GitHub (sem o `.env`).
-2. Em https://daily.dev/marketplace/submit, cole os textos de `marketplace-submission.md`, o conteúdo de `SKILL.md` e o link do repositório.
-3. O time do daily.dev revisa; o status aparece em **Your plugins**.
-
-## Notas de design
-
-- **Somente leitura:** usa `/search/posts`, `/recommend/semantic` e `/search/tags`. Nada de bookmark, follow ou upvote.
-- **Sem intents privilegiadas:** só responde ao próprio slash command; não lê mensagens do canal.
-- **Quota:** todas as buscas usam o token do dono do bot. Para um bot público em vários servidores, o ideal é registrar um app OAuth no daily.dev.
-- **Estado em memória:** a paginação guarda o cursor por 15 min num `Map`. Para rodar várias réplicas, troque por Redis.
+- **Per-user tokens only.** Unlinked users get a private Connect button and no API call is made.
+- **Private by default.** Search replies are ephemeral. Share posts titles and links only (no engagement numbers), with mentions disabled.
+- **Quota-aware.** 1 request per search, 1 per extra page. Tag autocomplete is opt-in (`ENABLE_TAG_AUTOCOMPLETE=true`), starts at 3 chars, debounced 700 ms, cached per user.
+- **Token hygiene.** AES-256-GCM at rest, file mode 600, refresh tokens rotated with a single in-flight refresh per user, revoked on disconnect.
+- **Single process.** OAuth state, search sessions and the token file live in one process; use Redis/a database for multiple replicas.
